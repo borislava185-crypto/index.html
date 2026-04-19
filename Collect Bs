@@ -1,1 +1,738 @@
+<!DOCTYPE html>
 
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>BSL Data Collector</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.10.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/hand-pose-detection@2.0.1/dist/hand-pose-detection.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;500;700&display=swap');
+
+- { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+–bg: #0a0a0f;
+–surface: #13131a;
+–border: #2a2a3a;
+–accent: #00e5ff;
+–accent2: #ff3d6b;
+–success: #00ff88;
+–text: #e8e8f0;
+–muted: #666680;
+–mono: ‘Space Mono’, monospace;
+–sans: ‘DM Sans’, sans-serif;
+}
+
+body {
+background: var(–bg);
+color: var(–text);
+font-family: var(–sans);
+min-height: 100dvh;
+display: flex;
+flex-direction: column;
+overflow-x: hidden;
+}
+
+/* Header */
+header {
+padding: 16px 20px;
+border-bottom: 1px solid var(–border);
+display: flex;
+align-items: center;
+justify-content: space-between;
+background: var(–surface);
+}
+
+header h1 {
+font-family: var(–mono);
+font-size: 14px;
+color: var(–accent);
+letter-spacing: 2px;
+text-transform: uppercase;
+}
+
+.status-dot {
+width: 8px; height: 8px;
+border-radius: 50%;
+background: var(–muted);
+transition: background 0.3s;
+}
+.status-dot.active { background: var(–success); box-shadow: 0 0 8px var(–success); animation: pulse 1.5s infinite; }
+.status-dot.recording { background: var(–accent2); box-shadow: 0 0 8px var(–accent2); animation: pulse 0.6s infinite; }
+
+@keyframes pulse {
+0%, 100% { opacity: 1; }
+50% { opacity: 0.4; }
+}
+
+/* Main layout */
+main {
+flex: 1;
+display: flex;
+flex-direction: column;
+padding: 16px;
+gap: 14px;
+max-width: 500px;
+margin: 0 auto;
+width: 100%;
+}
+
+/* Camera */
+.camera-wrap {
+position: relative;
+width: 100%;
+aspect-ratio: 4/3;
+border-radius: 12px;
+overflow: hidden;
+border: 1px solid var(–border);
+background: #000;
+}
+
+#video {
+width: 100%; height: 100%;
+object-fit: cover;
+transform: scaleX(-1);
+display: block;
+}
+
+#canvas {
+position: absolute;
+top: 0; left: 0;
+width: 100%; height: 100%;
+transform: scaleX(-1);
+}
+
+.camera-overlay {
+position: absolute;
+top: 0; left: 0; right: 0; bottom: 0;
+pointer-events: none;
+}
+
+/* Corner brackets */
+.bracket {
+position: absolute;
+width: 24px; height: 24px;
+border-color: var(–accent);
+border-style: solid;
+opacity: 0.6;
+}
+.bracket.tl { top: 10px; left: 10px; border-width: 2px 0 0 2px; }
+.bracket.tr { top: 10px; right: 10px; border-width: 2px 2px 0 0; }
+.bracket.bl { bottom: 10px; left: 10px; border-width: 0 0 2px 2px; }
+.bracket.br { bottom: 10px; right: 10px; border-width: 0 2px 2px 0; }
+
+.cam-status {
+position: absolute;
+top: 12px;
+left: 50%;
+transform: translateX(-50%);
+font-family: var(–mono);
+font-size: 10px;
+color: var(–accent);
+background: rgba(0,0,0,0.7);
+padding: 3px 10px;
+border-radius: 20px;
+letter-spacing: 1px;
+white-space: nowrap;
+}
+
+/* Recording progress bar */
+.progress-bar {
+position: absolute;
+bottom: 0; left: 0;
+height: 4px;
+background: var(–accent2);
+width: 0%;
+transition: width 0.1s linear;
+box-shadow: 0 0 10px var(–accent2);
+}
+
+/* Frame counter */
+.frame-counter {
+position: absolute;
+bottom: 10px;
+right: 10px;
+font-family: var(–mono);
+font-size: 11px;
+color: var(–accent2);
+background: rgba(0,0,0,0.7);
+padding: 3px 8px;
+border-radius: 4px;
+display: none;
+}
+
+/* Sign name input */
+.input-group {
+display: flex;
+flex-direction: column;
+gap: 6px;
+}
+
+label {
+font-family: var(–mono);
+font-size: 10px;
+color: var(–muted);
+letter-spacing: 1.5px;
+text-transform: uppercase;
+}
+
+input[type=“text”] {
+background: var(–surface);
+border: 1px solid var(–border);
+border-radius: 8px;
+color: var(–text);
+font-family: var(–mono);
+font-size: 16px;
+padding: 12px 16px;
+width: 100%;
+outline: none;
+transition: border-color 0.2s;
+text-transform: uppercase;
+letter-spacing: 2px;
+}
+input[type=“text”]:focus { border-color: var(–accent); }
+input[type=“text”]::placeholder { color: var(–muted); font-size: 12px; letter-spacing: 1px; text-transform: none; }
+
+/* Stats row */
+.stats-row {
+display: grid;
+grid-template-columns: 1fr 1fr 1fr;
+gap: 8px;
+}
+
+.stat-box {
+background: var(–surface);
+border: 1px solid var(–border);
+border-radius: 8px;
+padding: 10px;
+text-align: center;
+}
+
+.stat-num {
+font-family: var(–mono);
+font-size: 22px;
+color: var(–accent);
+display: block;
+line-height: 1;
+}
+
+.stat-label {
+font-size: 10px;
+color: var(–muted);
+margin-top: 4px;
+display: block;
+letter-spacing: 0.5px;
+}
+
+/* Buttons */
+.btn-record {
+width: 100%;
+padding: 18px;
+border-radius: 10px;
+border: none;
+background: var(–accent2);
+color: white;
+font-family: var(–mono);
+font-size: 14px;
+letter-spacing: 2px;
+text-transform: uppercase;
+cursor: pointer;
+transition: all 0.2s;
+position: relative;
+overflow: hidden;
+}
+
+.btn-record:active { transform: scale(0.98); }
+.btn-record:disabled {
+background: var(–border);
+color: var(–muted);
+cursor: not-allowed;
+}
+.btn-record.recording {
+background: var(–accent2);
+animation: recordPulse 0.6s infinite alternate;
+}
+
+@keyframes recordPulse {
+from { box-shadow: 0 0 0px var(–accent2); }
+to { box-shadow: 0 0 20px var(–accent2); }
+}
+
+.btn-row {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 8px;
+}
+
+.btn-secondary {
+padding: 14px;
+border-radius: 10px;
+border: 1px solid var(–border);
+background: var(–surface);
+color: var(–text);
+font-family: var(–mono);
+font-size: 11px;
+letter-spacing: 1px;
+text-transform: uppercase;
+cursor: pointer;
+transition: all 0.2s;
+}
+
+.btn-secondary:hover { border-color: var(–accent); color: var(–accent); }
+.btn-secondary:active { transform: scale(0.98); }
+.btn-secondary.danger:hover { border-color: var(–accent2); color: var(–accent2); }
+
+/* Log */
+.log {
+background: var(–surface);
+border: 1px solid var(–border);
+border-radius: 8px;
+padding: 12px;
+max-height: 120px;
+overflow-y: auto;
+display: flex;
+flex-direction: column;
+gap: 4px;
+}
+
+.log-entry {
+font-family: var(–mono);
+font-size: 11px;
+color: var(–muted);
+display: flex;
+justify-content: space-between;
+align-items: center;
+padding: 4px 0;
+border-bottom: 1px solid var(–border);
+}
+.log-entry:last-child { border-bottom: none; }
+.log-entry .sign-name { color: var(–text); }
+.log-entry .sign-count { color: var(–accent); }
+
+/* Instruction */
+.instruction {
+font-size: 12px;
+color: var(–muted);
+text-align: center;
+line-height: 1.6;
+padding: 0 8px;
+}
+
+.instruction strong { color: var(–accent); }
+
+/* Toast */
+.toast {
+position: fixed;
+bottom: 24px;
+left: 50%;
+transform: translateX(-50%) translateY(80px);
+background: var(–success);
+color: #000;
+font-family: var(–mono);
+font-size: 12px;
+padding: 10px 20px;
+border-radius: 20px;
+letter-spacing: 1px;
+transition: transform 0.3s ease;
+z-index: 100;
+white-space: nowrap;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.toast.error { background: var(–accent2); color: white; }
+
+/* Loading screen */
+#loading {
+position: fixed;
+inset: 0;
+background: var(–bg);
+display: flex;
+flex-direction: column;
+align-items: center;
+justify-content: center;
+gap: 16px;
+z-index: 200;
+}
+
+.loader-text {
+font-family: var(–mono);
+font-size: 12px;
+color: var(–accent);
+letter-spacing: 2px;
+animation: blink 1s infinite;
+}
+
+@keyframes blink {
+0%, 100% { opacity: 1; }
+50% { opacity: 0.3; }
+}
+
+.loader-bar {
+width: 200px;
+height: 2px;
+background: var(–border);
+border-radius: 2px;
+overflow: hidden;
+}
+
+.loader-fill {
+height: 100%;
+background: var(–accent);
+width: 0%;
+animation: load 3s ease forwards;
+}
+
+@keyframes load {
+0% { width: 0%; }
+60% { width: 70%; }
+100% { width: 95%; }
+}
+</style>
+
+</head>
+<body>
+
+<div id="loading">
+  <div style="font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 3px; margin-bottom: 8px;">BSL DATA COLLECTOR</div>
+  <div class="loader-text">LOADING HAND MODEL...</div>
+  <div class="loader-bar"><div class="loader-fill"></div></div>
+</div>
+
+<header>
+  <h1>BSL Collector</h1>
+  <div class="status-dot" id="statusDot"></div>
+</header>
+
+<main>
+  <div class="camera-wrap">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+    <div class="camera-overlay">
+      <div class="bracket tl"></div>
+      <div class="bracket tr"></div>
+      <div class="bracket bl"></div>
+      <div class="bracket br"></div>
+      <div class="cam-status" id="camStatus">HAND NOT DETECTED</div>
+      <div class="progress-bar" id="progressBar"></div>
+      <div class="frame-counter" id="frameCounter">0/30</div>
+    </div>
+  </div>
+
+  <div class="input-group">
+    <label>Sign Name</label>
+    <input type="text" id="signName" placeholder="e.g. HELLO, THANK YOU, YES" maxlength="30">
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-box">
+      <span class="stat-num" id="totalSamples">0</span>
+      <span class="stat-label">Samples</span>
+    </div>
+    <div class="stat-box">
+      <span class="stat-num" id="totalSigns">0</span>
+      <span class="stat-label">Signs</span>
+    </div>
+    <div class="stat-box">
+      <span class="stat-num" id="thisSamples">0</span>
+      <span class="stat-label">This Sign</span>
+    </div>
+  </div>
+
+  <button class="btn-record" id="recordBtn" disabled>
+    ● HOLD TO RECORD
+  </button>
+
+  <div class="btn-row">
+    <button class="btn-secondary" id="downloadBtn">↓ Download JSON</button>
+    <button class="btn-secondary danger" id="clearBtn">✕ Clear All</button>
+  </div>
+
+  <div class="log" id="log">
+    <div class="log-entry" style="color: var(--muted); font-size: 10px; text-align:center; width:100%; border:none;">No recordings yet</div>
+  </div>
+
+  <div class="instruction">
+    Type a sign name → position hand → <strong>hold RECORD</strong> for 1 second per sample.<br>
+    Aim for <strong>30 samples per sign</strong>. Move slightly between each.
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // State
+  let detector = null;
+  let stream = null;
+  let handDetected = false;
+  let isRecording = false;
+  let recordingFrames = [];
+  let allData = {};
+  let animFrame = null;
+  const FRAMES_PER_SAMPLE = 30;
+  const FPS_INTERVAL = 1000 / 30;
+  let lastFrameTime = 0;
+
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const statusDot = document.getElementById('statusDot');
+  const camStatus = document.getElementById('camStatus');
+  const recordBtn = document.getElementById('recordBtn');
+  const signNameInput = document.getElementById('signName');
+  const progressBar = document.getElementById('progressBar');
+  const frameCounter = document.getElementById('frameCounter');
+  const totalSamplesEl = document.getElementById('totalSamples');
+  const totalSignsEl = document.getElementById('totalSigns');
+  const thisSamplesEl = document.getElementById('thisSamples');
+  const logEl = document.getElementById('log');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const clearBtn = document.getElementById('clearBtn');
+
+  // Init
+  async function init() {
+    try {
+      // Camera
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        audio: false
+      });
+      video.srcObject = stream;
+      await new Promise(r => video.onloadedmetadata = r);
+      video.play();
+
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // Load model
+      const model = handPoseDetection.SupportedModels.MediaPipeHands;
+      const config = {
+        runtime: 'tfjs',
+        modelType: 'lite',
+        maxHands: 1
+      };
+      detector = await handPoseDetection.createDetector(model, config);
+
+      // Hide loading
+      document.getElementById('loading').style.display = 'none';
+      statusDot.classList.add('active');
+      recordBtn.disabled = false;
+
+      // Start detection loop
+      detectLoop();
+    } catch (e) {
+      showToast('Camera error: ' + e.message, true);
+      document.getElementById('loading').querySelector('.loader-text').textContent = 'CAMERA ERROR';
+    }
+  }
+
+  // Detection loop
+  async function detectLoop() {
+    animFrame = requestAnimationFrame(detectLoop);
+
+    const now = performance.now();
+    if (now - lastFrameTime < FPS_INTERVAL) return;
+    lastFrameTime = now;
+
+    if (!detector || video.readyState < 2) return;
+
+    try {
+      const hands = await detector.estimateHands(video);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (hands.length > 0) {
+        handDetected = true;
+        drawLandmarks(hands[0].keypoints);
+        camStatus.textContent = 'HAND DETECTED ✓';
+        camStatus.style.color = 'var(--success)';
+
+        if (isRecording) {
+          captureFrame(hands[0].keypoints);
+        }
+      } else {
+        handDetected = false;
+        camStatus.textContent = 'HAND NOT DETECTED';
+        camStatus.style.color = 'var(--accent)';
+      }
+    } catch(e) {}
+  }
+
+  // Draw landmarks
+  function drawLandmarks(keypoints) {
+    const connections = [
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [0,9],[9,10],[10,11],[11,12],
+      [0,13],[13,14],[14,15],[15,16],
+      [0,17],[17,18],[18,19],[19,20],
+      [5,9],[9,13],[13,17]
+    ];
+
+    const scaleX = canvas.width / video.videoWidth;
+    const scaleY = canvas.height / video.videoHeight;
+
+    // Connections
+    ctx.strokeStyle = isRecording ? 'rgba(255,61,107,0.7)' : 'rgba(0,229,255,0.5)';
+    ctx.lineWidth = 2;
+    connections.forEach(([a,b]) => {
+      const kpA = keypoints[a], kpB = keypoints[b];
+      ctx.beginPath();
+      ctx.moveTo(kpA.x * scaleX, kpA.y * scaleY);
+      ctx.lineTo(kpB.x * scaleX, kpB.y * scaleY);
+      ctx.stroke();
+    });
+
+    // Points
+    keypoints.forEach((kp, i) => {
+      ctx.beginPath();
+      ctx.arc(kp.x * scaleX, kp.y * scaleY, i === 0 ? 5 : 3, 0, Math.PI * 2);
+      ctx.fillStyle = isRecording ? 'var(--accent2)' : 'var(--accent)';
+      ctx.fill();
+    });
+  }
+
+  // Capture frame
+  function captureFrame(keypoints) {
+    // Normalise landmarks relative to wrist
+    const wrist = keypoints[0];
+    const normalised = keypoints.map(kp => ({
+      x: kp.x - wrist.x,
+      y: kp.y - wrist.y,
+      z: (kp.z || 0) - (wrist.z || 0)
+    }));
+    recordingFrames.push(normalised);
+
+    const progress = recordingFrames.length / FRAMES_PER_SAMPLE;
+    progressBar.style.width = (progress * 100) + '%';
+    frameCounter.textContent = `${recordingFrames.length}/${FRAMES_PER_SAMPLE}`;
+
+    if (recordingFrames.length >= FRAMES_PER_SAMPLE) {
+      saveSample();
+    }
+  }
+
+  // Save sample
+  function saveSample() {
+    const name = signNameInput.value.trim().toUpperCase();
+    if (!name) { stopRecording(); showToast('Enter a sign name first!', true); return; }
+
+    if (!allData[name]) allData[name] = [];
+    allData[name].push([...recordingFrames]);
+
+    stopRecording();
+    updateStats();
+    updateLog(name);
+    showToast(`✓ ${name} sample #${allData[name].length} saved`);
+  }
+
+  // Record button - hold to record
+  recordBtn.addEventListener('pointerdown', () => {
+    if (!handDetected) { showToast('Show your hand first!', true); return; }
+    const name = signNameInput.value.trim();
+    if (!name) { showToast('Enter a sign name first!', true); return; }
+    startRecording();
+  });
+
+  recordBtn.addEventListener('pointerup', () => {
+    if (isRecording && recordingFrames.length < FRAMES_PER_SAMPLE) {
+      stopRecording();
+      showToast('Hold longer — need 1 full second', true);
+    }
+  });
+
+  recordBtn.addEventListener('pointerleave', () => {
+    if (isRecording && recordingFrames.length < FRAMES_PER_SAMPLE) {
+      stopRecording();
+    }
+  });
+
+  function startRecording() {
+    isRecording = true;
+    recordingFrames = [];
+    recordBtn.textContent = '● RECORDING...';
+    recordBtn.classList.add('recording');
+    statusDot.classList.remove('active');
+    statusDot.classList.add('recording');
+    frameCounter.style.display = 'block';
+    progressBar.style.width = '0%';
+  }
+
+  function stopRecording() {
+    isRecording = false;
+    recordingFrames = [];
+    recordBtn.textContent = '● HOLD TO RECORD';
+    recordBtn.classList.remove('recording');
+    statusDot.classList.remove('recording');
+    statusDot.classList.add('active');
+    frameCounter.style.display = 'none';
+    progressBar.style.width = '0%';
+  }
+
+  // Stats
+  function updateStats() {
+    const signs = Object.keys(allData);
+    const total = signs.reduce((sum, k) => sum + allData[k].length, 0);
+    const name = signNameInput.value.trim().toUpperCase();
+    totalSamplesEl.textContent = total;
+    totalSignsEl.textContent = signs.length;
+    thisSamplesEl.textContent = name && allData[name] ? allData[name].length : 0;
+  }
+
+  signNameInput.addEventListener('input', updateStats);
+
+  // Log
+  function updateLog(name) {
+    logEl.innerHTML = '';
+    Object.keys(allData).reverse().forEach(sign => {
+      const div = document.createElement('div');
+      div.className = 'log-entry';
+      div.innerHTML = `<span class="sign-name">${sign}</span><span class="sign-count">${allData[sign].length} samples</span>`;
+      logEl.appendChild(div);
+    });
+  }
+
+  // Download
+  downloadBtn.addEventListener('click', () => {
+    const signs = Object.keys(allData);
+    if (signs.length === 0) { showToast('No data yet!', true); return; }
+
+    const output = {
+      created: new Date().toISOString(),
+      signs: signs,
+      framesPerSample: FRAMES_PER_SAMPLE,
+      data: allData
+    };
+
+    const blob = new Blob([JSON.stringify(output, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `bsl-data-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast('Downloaded!');
+  });
+
+  // Clear
+  clearBtn.addEventListener('click', () => {
+    if (Object.keys(allData).length === 0) return;
+    if (!confirm('Clear all recorded data?')) return;
+    allData = {};
+    logEl.innerHTML = '<div class="log-entry" style="color: var(--muted); font-size: 10px; text-align:center; width:100%; border:none;">No recordings yet</div>';
+    updateStats();
+    showToast('Cleared');
+  });
+
+  // Toast
+  function showToast(msg, isError = false) {
+    const toast = document.getElementById('toast');
+    toast.textContent = msg;
+    toast.className = 'toast' + (isError ? ' error' : '') + ' show';
+    setTimeout(() => toast.className = 'toast' + (isError ? ' error' : ''), 2500);
+  }
+
+  init();
+</script>
+
+</body>
+</html>
